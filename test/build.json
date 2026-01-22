@@ -3,10 +3,10 @@
     "outputDir": "build/",
     "objOutput": "build/obj/",
     "cppVersion": "c++17",
-    "files": [
-        "src/*.cpp"
+    "filesDir": [
+        "src/"
     ],
-    "includeDirs": [],
+    "includesDir": [],
     "libsDir": [],
     "libs": [],
     "defines": []

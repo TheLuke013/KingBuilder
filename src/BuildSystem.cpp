@@ -1,7 +1,6 @@
 #include "BuildSystem.h"
-#include "JSON.h"
 
-BuildSystem::BuildSystem() : canBuild(false), buildDir("") {}
+BuildSystem::BuildSystem() : buildDir(""), buildJson(JSON()), canBuild(false) {}
 
 BuildSystem::~BuildSystem() {
     if (buildFile.is_open())
@@ -12,6 +11,32 @@ bool BuildSystem::ValueIsGood(const std::string& value) {
 	if (value.empty()) return false;
 
 	return true;
+}
+
+bool BuildSystem::ValueIsArray(const std::string& value) {
+	if (!buildJson.GetData().HasMember(value.c_str()) || !buildJson.GetData()[value.c_str()].IsArray()) {
+		std::cout << "Build Error: '" << value << "' must be an array\n";
+		return false;
+	}
+
+	return true;
+}
+
+std::vector<std::string> BuildSystem::GetFiles(const std::string& dirFiles) {
+	try {
+		std::vector<std::string> files;
+	
+	for (const auto& entry : std::filesystem::directory_iterator(dirFiles)) {
+		if (entry.is_regular_file()) {
+			files.push_back(entry.path().string());
+		}
+	}
+
+	return files;
+	} catch (const std::filesystem::filesystem_error& e) {
+		std::cout << "Build Error: Filesystem Error: " << e.what() << std::endl;
+		return {};
+	}
 }
 
 void BuildSystem::OpenBuildFile(const std::string& buildDir) {
@@ -32,59 +57,138 @@ void BuildSystem::OpenBuildFile(const std::string& buildDir) {
 			buildFile.close();
 			return;
 		}
-
-		JSON buildJson = JSON();
+		//PARSEIA O ARQUIVO DE BUILD
 		buildJson.Parse(content);
 
 		//OBTEM VALORES NO ARQUIVO DE BUILD E OS VERIFICA
-		std::string outputName = buildJson.GetValue<std::string>("outputName", "");
+		std::string outputName = buildJson.GetValue<std::string>(BuildKeys::OUTPUT_NAME, "");
 		if (!ValueIsGood(outputName)) {
 			std::cout << "Build Error: value ''outputName'' not is expected type" << std::endl;
 			return;
 		}
 		buildStruct.outputName = outputName;
 
-		std::string outputDir = buildJson.GetValue<std::string>("outputDir", "");
+		std::string outputDir = buildJson.GetValue<std::string>(BuildKeys::OUTPUT_DIR, "");
 		if (!ValueIsGood(outputDir)) {
-			std::cout << "Build Error: value ''outputDir'' not is expected type" << std::endl;
+			std::cout << "Build Error: value ''" << BuildKeys::OUTPUT_DIR << "'' not is expected type" << std::endl;
 			return;
 		}
 		buildStruct.outputDir = outputDir;
 
-		std::string objOutput = buildJson.GetValue<std::string>("objOutput", "");
+		std::string objOutput = buildJson.GetValue<std::string>(BuildKeys::OBJ_OUTPUT, "");
 		if (!ValueIsGood(objOutput)) {
-			std::cout << "Build Error: value ''objOutput'' not is expected type" << std::endl;
+			std::cout << "Build Error: value ''" << BuildKeys::OBJ_OUTPUT << "'' not is expected type" << std::endl;
 			return;
 		}
 		buildStruct.objOutput = objOutput;
 
-		std::string cppVersion = buildJson.GetValue<std::string>("cppVersion", "");
+		std::string cppVersion = buildJson.GetValue<std::string>(BuildKeys::CPP_VERSION, "");
 		if (!ValueIsGood(cppVersion)) {
-			std::cout << "Build Error: value ''cppVersion'' not is expected type" << std::endl;
+			std::cout << "Build Error: value ''" << BuildKeys::CPP_VERSION << "'' not is expected type" << std::endl;
 			return;
 		}
 		buildStruct.cppVersion = cppVersion;
 
 		//OBTEM ARRAY DE ARQUIVOS DE COMPILAÇÃO E O VERIFICA
-		rapidjson::GenericArray files = buildJson.GetData()["files"].GetArray();
-		if (files.Empty()) {
-			std::cout << "Build Error: not there no one file to compile in ''files''." << std::endl;
+		if (!ValueIsArray(BuildKeys::FILES_DIR)) {
 			return;
 		}
 
-		for (int i = 0; i < files.Size(); i++) {
-			rapidjson::GenericValue value = rapidjson::GenericValue(files[i], buildJson.GetAllocator());
+		rapidjson::GenericArray filesDir = buildJson.GetData()[BuildKeys::FILES_DIR].GetArray();
+		if (filesDir.Empty()) {
+			std::cout << "Build Error: not there no one file to compile in ''filesDir''." << std::endl;
+			return;
+		}
+
+		//SALVA TODOS DIRETORIOS QUE DEVEM SER ITERADOS
+		for (size_t i = 0; i < filesDir.Size(); i++) {
+			rapidjson::GenericValue value = rapidjson::GenericValue(filesDir[i], buildJson.GetAllocator());
 			std::string file = value.GetString();
-			buildStruct.files.push_back(buildDir + file);
+			buildStruct.Dirfiles.push_back(buildDir + file);
+		}
+
+		//ITERA PELOS DIRETORIOS E ARMAZENA TODOS OS ARQUIVOS
+		for (size_t i = 0; i < buildStruct.Dirfiles.size(); i++) {
+			std::string dirFiles = buildStruct.Dirfiles[i];
+			std::vector<std::string> dirFilesVector = GetFiles(dirFiles);
+			buildStruct.files.insert(buildStruct.files.end(), dirFilesVector.begin(), dirFilesVector.end());
 		}
 
 		//VERIFICA SE O ARRAY DE INCLUDE DIRS POSSUI ALGUM ELEMENTO
-		rapidjson::GenericArray includeDirs = buildJson.GetData()["includeDirs"].GetArray();
-		if (!includeDirs.Empty()) {
-			for (int i = 0; i < includeDirs.Size(); i++) {
-				rapidjson::GenericValue value = rapidjson::GenericValue(includeDirs[i], buildJson.GetAllocator());
-				std::string includeDir = value.GetString();
-				buildStruct.includeDirs.push_back(buildDir + includeDir);
+		if (ValueIsArray(BuildKeys::INCLUDES_DIR)) {
+			rapidjson::GenericArray includeDirs = buildJson.GetData()[BuildKeys::INCLUDES_DIR].GetArray();
+			if (!includeDirs.Empty()) {
+				for (size_t i = 0; i < includeDirs.Size(); i++) {
+					rapidjson::GenericValue value = rapidjson::GenericValue(includeDirs[i], buildJson.GetAllocator());
+					std::string includeDir = value.GetString();
+					buildStruct.includeDirs.push_back(buildDir + includeDir);
+				}
+			}
+		}
+
+		//VERIFICA SE O ARRAY DE LIBS DIR POSSUI ALGUM ELEMENTO
+		if (ValueIsArray(BuildKeys::LIBS_DIR)) {
+			rapidjson::GenericArray libsDir = buildJson.GetData()[BuildKeys::LIBS_DIR].GetArray();
+			if (!libsDir.Empty()) {
+				for (size_t i = 0; i < libsDir.Size(); i++) {
+					rapidjson::GenericValue value = rapidjson::GenericValue(libsDir[i], buildJson.GetAllocator());
+					std::string libDir = value.GetString();
+					buildStruct.libsDir.push_back(buildDir + libDir);
+				}
+			}
+		}
+
+		//VERIFICA SE O ARRAY DE LIBS POSSUI ALGUM ELEMENTO
+		if (ValueIsArray(BuildKeys::LIBS)) {
+			rapidjson::GenericArray libs = buildJson.GetData()[BuildKeys::LIBS].GetArray();
+			if (!libs.Empty()) {
+				for (size_t i = 0; i < libs.Size(); i++) {
+					rapidjson::GenericValue value = rapidjson::GenericValue(libs[i], buildJson.GetAllocator());
+					std::string lib = value.GetString();
+					buildStruct.libs.push_back(lib);
+				}
+			}
+		}
+
+		//VERIFICA SE O ARRAY DE DEFINES POSSUI ALGUM ELEMENTO
+		if (ValueIsArray(BuildKeys::DEFINES)) {
+			rapidjson::GenericArray defines = buildJson.GetData()[BuildKeys::DEFINES].GetArray();
+			if (!defines.Empty()) {
+				for (size_t i = 0; i < defines.Size(); i++) {
+					rapidjson::GenericValue value = rapidjson::GenericValue(defines[i], buildJson.GetAllocator());
+					std::string define = value.GetString();
+					buildStruct.defines.push_back(define);
+				}
+			}
+		}
+
+		//IMPRIME AS INFORMAÇÕES DE BUILD
+		std::cout << "\nCompilation Info:\n" << std::endl;
+		for (size_t i = 0; i < buildStruct.files.size(); i++) {
+			std::cout << "File to compile: " << buildStruct.files[i] << std::endl;
+		}
+
+		if (!buildStruct.includeDirs.empty()) {
+			for (size_t i = 0; i < buildStruct.includeDirs.size(); i++) {
+				std::cout << "Include Dir: " << buildStruct.includeDirs[i] << std::endl;
+			}
+		}
+
+		if (!buildStruct.libsDir.empty()) {
+			for (size_t i = 0; i < buildStruct.libsDir.size(); i++) {
+				std::cout << "Libs Dir: " << buildStruct.libsDir[i] << std::endl;
+			}
+		}
+
+		if (!buildStruct.libs.empty()) {
+			for (size_t i = 0; i < buildStruct.libs.size(); i++) {
+				std::cout << "Libs: " << buildStruct.libs[i] << std::endl;
+			}
+		}
+
+		if (!buildStruct.defines.empty()) {
+			for (size_t i = 0; i < buildStruct.defines.size(); i++) {
+				std::cout << "Define: " << buildStruct.defines[i] << std::endl;
 			}
 		}
 
