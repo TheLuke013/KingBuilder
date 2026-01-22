@@ -1,0 +1,13 @@
+{
+    "outputName": "Test.exe",
+    "outputDir": "build/",
+    "objOutput": "build/obj/",
+    "cppVersion": "c++17",
+    "files": [
+        "src/*.cpp"
+    ],
+    "includeDirs": [],
+    "libsDir": [],
+    "libs": [],
+    "defines": []
+}
