@@ -15,11 +15,11 @@ int main(int argc, char** argv) {
 
     try {
         buildSystem.OpenBuildFile(buildDir);
-        /*if (buildSystem.Compile()) {
+        if (buildSystem.Compile()) {
             std::cout << "\nBuild was completed successful\n" << std::endl;
         } else {
             std::cout << "\nBuild was not completed successful. Error to build.\n" << std::endl;
-        }*/
+        }
     } catch (const std::exception& e) {
         std::cout << "Fatal Error: " << e.what() << std::endl;
     }

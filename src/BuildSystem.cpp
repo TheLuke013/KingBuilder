@@ -204,23 +204,79 @@ bool BuildSystem::Compile() {
 		return false;
 	}
 
-	std::string output = buildStruct.outputDir + buildStruct.outputName;
-	std::string compileCommand = "g++ -o " + output;
+	//MONTA COMANDO DE COMPILAÇÃO
+	std::system("g++ --version");
 
-	for (auto file : buildStruct.files) {
-		compileCommand += " " + file;
-	}
+	//OUTPUTS
+	std::string output = buildDir + buildStruct.outputDir + buildStruct.outputName;
+	std::string objOutput = buildDir + buildStruct.objOutput;
 
+	std::string compileCommand = "g++";
+
+	//VERSÃO DO C++
+	compileCommand += " --std=" + buildStruct.cppVersion;
+
+	//ADICIONA INCLUDES AO COMANDO DE COMPILAÇÃO
 	if (!buildStruct.includeDirs.empty()) {
 		for (auto include : buildStruct.includeDirs) {
 			compileCommand += " -I" + include;
 		}
 	}
 
-	compileCommand += " --std=" + buildStruct.cppVersion;
+	//ADICIONA LIBS DIR AO COMANDO DE COMPILAÇÃO
+	if (!buildStruct.libsDir.empty()) {
+		for (auto libDir : buildStruct.libsDir) {
+			compileCommand += " -L" + libDir;
+		}
+	}
+
+	//ADICIONA LIBS AO COMANDO DE COMPILAÇÃO
+	if (!buildStruct.libs.empty()) {
+		for (auto lib : buildStruct.libs) {
+			compileCommand += " -l" + lib;
+		}
+	}
+
+	//ADICIONA DEFINES AO COMANDO DE COMPILAÇÃO
+	if (!buildStruct.defines.empty()) {
+		for (auto define : buildStruct.defines) {
+			compileCommand += " -D" + define;
+		}
+	}
+
+
+	//COMPILAÇÃO PARA OBJETOS
+
+	//VERIFICA SE O DIRETÓRIO DE OBJETOS EXISTE
+	if (!std::filesystem::exists(objOutput)) {
+		std::filesystem::create_directories(objOutput);
+	}
+
+	//COMPILA CADA ARQUIVO PARA OBJETO
+	for (size_t i = 0; i < buildStruct.files.size(); i++) {
+		std::string file = buildStruct.files[i];
+		std::cout << "\nCompiling file: " << file << std::endl;
+
+		std::filesystem::path filepath = std::filesystem::path(file);
+		std::string filename = filepath.stem().string();
+		std::string objFile = objOutput + filename + ".o";
+
+		std::string compileObjCommand = compileCommand;
+		compileObjCommand += " -c " + file + " -o " + objFile;
+
+		//EXECUTA O COMANDO PARA COMPILAR O OBJETO
+		int commandResult = std::system(compileObjCommand.c_str());
+		if (commandResult != 0) {
+			std::cout << "\nFatal Error: Error to compile file: " << file << std::endl;
+			return false;
+		}
+
+		//ADICIONA O ARQUIVO OBJETO AO COMANDO FINAL DE LINKAGEM
+		//compileCommand += " " + objFile;
+	}
 
 	//RESETA O TARGET DE BUILD
-	if (!std::filesystem::exists(buildStruct.outputDir)) {
+	/*if (!std::filesystem::exists(buildStruct.outputDir)) {
 		std::filesystem::create_directories(buildStruct.outputDir);
 	} else {
 		std::fstream outputFile;
@@ -236,13 +292,11 @@ bool BuildSystem::Compile() {
 	}
 
 	//EXECUTA O COMANDO PARA COMPILAR
-	std::system("g++ --version");
-
 	int commandResult = std::system(compileCommand.c_str());
 	if (commandResult != 0) {
 		std::cout << "\nFatal Error: Error to compile files" << std::endl;
 		return false;
-	}
+	}*/
 
 	return true;
 }
