@@ -46,6 +46,29 @@ bool BuildSystem::CheckArchitecture(const std::string& architecture) {
 	return true;
 }
 
+bool BuildSystem::CheckCXXStandard(const std::string& cxxStandard) {
+	if (cxxStandard != CXXStandards::CXX98 &&
+		cxxStandard != CXXStandards::CXX03 &&
+		cxxStandard != CXXStandards::CXX11 &&
+		cxxStandard != CXXStandards::CXX14 &&
+		cxxStandard != CXXStandards::CXX17 &&
+		cxxStandard != CXXStandards::CXX20 &&
+		cxxStandard != CXXStandards::CXX23) {
+		std::cout << "Build Error: '" << cxxStandard << "' is not a valid C++ standard\n";
+		return false;
+	}
+	return true;
+}
+
+bool BuildSystem::CheckCompiler(const std::string& compiler) {
+	if (compiler != Compilers::GXX &&
+		compiler != Compilers::CLANG) {
+		std::cout << "Build Error: '" << compiler << "' is not a valid compiler\n";
+		return false;
+	}
+	return true;
+}
+
 std::vector<std::string> BuildSystem::GetFiles(const std::string& dirFiles) {
 	try {
 		std::vector<std::string> files;
@@ -120,12 +143,19 @@ void BuildSystem::OpenBuildFile(const std::string& buildDir) {
 		}
 		buildStruct.outputDir = outputDir;
 
-		std::string cppVersion = buildJson.GetValue<std::string>(BuildKeys::CPP_VERSION, "");
-		if (!ValueIsGood(cppVersion)) {
-			std::cout << "Build Error: value ''" << BuildKeys::CPP_VERSION << "'' not is expected type" << std::endl;
+		std::string cStandard = buildJson.GetValue<std::string>(BuildKeys::C_STANDARD, "");
+		if (!ValueIsGood(cStandard) || !CheckCXXStandard(cStandard)) {
+			std::cout << "Build Error: value ''" << BuildKeys::C_STANDARD << "'' not is expected type" << std::endl;
 			return;
 		}
-		buildStruct.cppVersion = cppVersion;
+		buildStruct.cStandard = cStandard;
+
+		std::string compiler = buildJson.GetValue<std::string>(BuildKeys::COMPILER, "");
+		if (!ValueIsGood(compiler) || !CheckCompiler(compiler)) {
+			std::cout << "Build Error: value ''" << BuildKeys::COMPILER << "'' not is expected type" << std::endl;
+			return;
+		}
+		buildStruct.compiler = compiler;
 
 		//OBTEM ARRAY DE ARQUIVOS DE COMPILAÇÃO E O VERIFICA
 		if (!ValueIsArray(BuildKeys::FILES_DIR)) {
@@ -200,6 +230,18 @@ void BuildSystem::OpenBuildFile(const std::string& buildDir) {
 			}
 		}
 
+		//VERIFICA SE O ARRAY DE PRE BUILD COMMANDS POSSUI ALGUM ELEMENTO
+		if (ValueIsArray(BuildKeys::PRE_BUILD_COMMANDS)) {
+			rapidjson::GenericArray preBuildCommands = buildJson.GetData()[BuildKeys::PRE_BUILD_COMMANDS].GetArray();
+			if (!preBuildCommands.Empty()) {
+				for (size_t i = 0; i < preBuildCommands.Size(); i++) {
+					rapidjson::GenericValue value = rapidjson::GenericValue(preBuildCommands[i], buildJson.GetAllocator());
+					std::string command = value.GetString();
+					buildStruct.preBuildCommands.push_back(command);
+				}
+			}
+		}
+
 		//VERIFICA SE O ARRAY DE POST BUILD COMMANDS POSSUI ALGUM ELEMENTO
 		if (ValueIsArray(BuildKeys::POST_BUILD_COMMANDS)) {
 			rapidjson::GenericArray postBuildCommands = buildJson.GetData()[BuildKeys::POST_BUILD_COMMANDS].GetArray();
@@ -255,16 +297,35 @@ bool BuildSystem::Compile() {
 		return false;
 	}
 
-	//MONTA COMANDO DE COMPILAÇÃO
-	std::system("g++ --version");
+	//EXECUTA COMANDOS PRÉ BUILD
+	if (!buildStruct.preBuildCommands.empty()) {
+		std::cout << "\nExecuting Pre-Build Commands:\n" << std::endl;
+		for (size_t i = 0; i < buildStruct.preBuildCommands.size(); i++) {
+			std::string command = buildStruct.preBuildCommands[i];
+			std::cout << "Pre-Build Command: " << command << std::endl;
+			int commandResult = std::system(command.c_str());
+			if (commandResult != 0) {
+				std::cout << "\nFatal Error: Error to execute Pre-Build Command: " << command << std::endl;
+				return false;
+			}
+		}
+	}
+
+	//VERIFICA VERSÃO DO COMPILADOR
+	std::string compilerCheckCommand = buildStruct.compiler + " --version";
+	int compilerCheckResult = std::system(compilerCheckCommand.c_str());
+	if (compilerCheckResult != 0) {
+		std::cout << "\nFatal Error: Compiler '" << buildStruct.compiler << "' not found." << std::endl;
+		return false;
+	}
 
 	//BASE DOS COMANDOS DE COMPILAÇÃO
-	std::string compileCommand = "g++";
+	std::string compileCommand = buildStruct.compiler;
 	std::string libCompileCommand = "ar rcs ";
 
 	//OUTPUTS
 	std::string output = buildDir + buildStruct.outputDir;
-	std::string objOutput = buildDir + buildStruct.outputDir + "obj/";
+	std::string objOutput = buildDir + buildStruct.outputDir;
 
 	//ACRESCENTA TIPO DE BUILD AO DIRETÓRIO DOS OUTPUTS
 	if (buildStruct.buildType == BuildTypes::DEBUG) {
@@ -294,10 +355,13 @@ bool BuildSystem::Compile() {
 
 	if (buildStruct.type == TargetTypes::DYNAMIC_LIB) {
 		output += buildStruct.outputName + ".dll";
+		objOutput += "obj/";
 	} else if (buildStruct.type == TargetTypes::STATIC_LIB) {
 		output += buildStruct.outputName + ".lib";
+		objOutput += "obj/";
 	} else {
 		output += buildStruct.outputName + ".exe";
+		objOutput += "obj/";
 	}
 
 	libCompileCommand += output;
@@ -306,15 +370,20 @@ bool BuildSystem::Compile() {
 	std::cout << "Object Output Dir: " << objOutput << std::endl;
 
 	//VERSÃO DO C++
-	compileCommand += " --std=" + buildStruct.cppVersion;
+	compileCommand += " -std=" + buildStruct.cStandard;
 
 	//TIPO DE BUILD
 	if (buildStruct.buildType == BuildTypes::DEBUG) {
-		compileCommand += " -g -O0 -DDEBUG";
+		compileCommand += " -g -O0 -DDEBUG -Wall -Wextra";
 	} else if (buildStruct.buildType == BuildTypes::RELEASE) {
-		compileCommand += " -O2 -g -DNDEBUG";
+		compileCommand += " -O2 -g -DNDEBUG -Wall -Wextra";
 	} else if (buildStruct.buildType == BuildTypes::DISTRIBUTION) {
-		compileCommand += " -O3 -DNDEBUG -s";
+		compileCommand += " -O3 -DNDEBUG -s -Wall -Wextra";
+	}
+
+	if (buildStruct.buildType == BuildTypes::DISTRIBUTION &&
+		buildStruct.type == TargetTypes::DYNAMIC_LIB) {
+		compileCommand += " -fvisibility=hidden";
 	}
 
 	//ADICIONA INCLUDES AO COMANDO DE COMPILAÇÃO
@@ -347,8 +416,19 @@ bool BuildSystem::Compile() {
 		std::cout << "\nCompiling file: " << file << std::endl;
 
 		std::filesystem::path filepath = std::filesystem::path(file);
-		std::string filename = filepath.stem().string();
-		std::string objFile = objOutput + filename + ".o";
+		auto relative = std::filesystem::relative(filepath, buildDir);
+		std::string safeName = relative.string();
+		std::replace(safeName.begin(), safeName.end(), '/', '_');
+		std::replace(safeName.begin(), safeName.end(), '\\', '_');
+
+		std::string objFile = objOutput + safeName + ".o";
+
+		if (std::filesystem::exists(objFile)) {
+			if (std::filesystem::last_write_time(objFile) >
+				std::filesystem::last_write_time(file)) {
+				continue;
+			}
+		}
 
 		std::string compileObjCommand = compileCommand;
 		if (buildStruct.type == TargetTypes::DYNAMIC_LIB) {
@@ -366,6 +446,11 @@ bool BuildSystem::Compile() {
 
 		//ADICIONA O ARQUIVO OBJETO AO COMANDO FINAL DE LINKAGEM
 		objectFiles.push_back(objFile);
+	}
+
+	if (objectFiles.empty()) {
+		std::cout << "\nNothing to compile. All files are up to date." << std::endl;
+		return true;
 	}
 
 	//ADICIONA ARQUIVOS OBJETOS AO COMANDO DE LINKAGEM

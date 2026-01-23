@@ -4,7 +4,8 @@
     "architecture": "x64",
     "outputName": "Test",
     "outputDir": "build/",
-    "cppVersion": "c++17",
+    "cStandard": "c++17",
+    "compiler": "g++",
     "filesDir": [
         "src/"
     ],
@@ -12,5 +13,6 @@
     "libsDir": [],
     "libs": [],
     "defines": [],
+    "preBuildCommands": [],
     "postBuildCommands": []
 }
