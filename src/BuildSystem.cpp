@@ -23,8 +23,24 @@ bool BuildSystem::ValueIsArray(const std::string& value) {
 }
 
 bool BuildSystem::CheckBuildType(const std::string& type) {
-	if (type != BuildTypes::EXECUTABLE && type != BuildTypes::STATIC_LIB && type != BuildTypes::DYNAMIC_LIB) {
+	if (type != BuildTypes::DEBUG && type != BuildTypes::RELEASE && type != BuildTypes::DISTRIBUTION) {
 		std::cout << "Build Error: '" << type << "' is not a valid build type\n";
+		return false;
+	}
+	return true;
+}
+
+bool BuildSystem::CheckTargetType(const std::string& type) {
+	if (type != TargetTypes::EXECUTABLE && type != TargetTypes::STATIC_LIB && type != TargetTypes::DYNAMIC_LIB) {
+		std::cout << "Build Error: '" << type << "' is not a valid target type\n";
+		return false;
+	}
+	return true;
+}
+
+bool BuildSystem::CheckArchitecture(const std::string& architecture) {
+	if (architecture != Architectures::X86 && architecture != Architectures::X64) {
+		std::cout << "Build Error: '" << architecture << "' is not a valid architecture\n";
 		return false;
 	}
 	return true;
@@ -70,11 +86,25 @@ void BuildSystem::OpenBuildFile(const std::string& buildDir) {
 
 		//OBTEM VALORES NO ARQUIVO DE BUILD E OS VERIFICA
 		std::string type = buildJson.GetValue<std::string>(BuildKeys::TYPE, "");
-		if (!ValueIsGood(type) || !CheckBuildType(type)) {
+		if (!ValueIsGood(type) || !CheckTargetType(type)) {
 			std::cout << "Build Error: value ''" << BuildKeys::TYPE << "'' not is expected type" << std::endl;
 			return;
 		}
 		buildStruct.type = type;
+
+		std::string buildType = buildJson.GetValue<std::string>(BuildKeys::BUILD_TYPE, "");
+		if (!ValueIsGood(buildType) || !CheckBuildType(buildType)) {
+			std::cout << "Build Error: value ''" << BuildKeys::BUILD_TYPE << "'' not is expected type" << std::endl;
+			return;
+		}
+		buildStruct.buildType = buildType;
+
+		std::string architecture = buildJson.GetValue<std::string>(BuildKeys::ARCHITECTURE, "");
+		if (!ValueIsGood(architecture) || !CheckArchitecture(architecture)) {
+			std::cout << "Build Error: value ''" << BuildKeys::ARCHITECTURE << "'' not is expected type" << std::endl;
+			return;
+		}
+		buildStruct.architecture = architecture;
 
 		std::string outputName = buildJson.GetValue<std::string>(BuildKeys::OUTPUT_NAME, "");
 		if (!ValueIsGood(outputName)) {
@@ -89,13 +119,6 @@ void BuildSystem::OpenBuildFile(const std::string& buildDir) {
 			return;
 		}
 		buildStruct.outputDir = outputDir;
-
-		std::string objOutput = buildJson.GetValue<std::string>(BuildKeys::OBJ_OUTPUT, "");
-		if (!ValueIsGood(objOutput)) {
-			std::cout << "Build Error: value ''" << BuildKeys::OBJ_OUTPUT << "'' not is expected type" << std::endl;
-			return;
-		}
-		buildStruct.objOutput = objOutput;
 
 		std::string cppVersion = buildJson.GetValue<std::string>(BuildKeys::CPP_VERSION, "");
 		if (!ValueIsGood(cppVersion)) {
@@ -177,6 +200,18 @@ void BuildSystem::OpenBuildFile(const std::string& buildDir) {
 			}
 		}
 
+		//VERIFICA SE O ARRAY DE POST BUILD COMMANDS POSSUI ALGUM ELEMENTO
+		if (ValueIsArray(BuildKeys::POST_BUILD_COMMANDS)) {
+			rapidjson::GenericArray postBuildCommands = buildJson.GetData()[BuildKeys::POST_BUILD_COMMANDS].GetArray();
+			if (!postBuildCommands.Empty()) {
+				for (size_t i = 0; i < postBuildCommands.Size(); i++) {
+					rapidjson::GenericValue value = rapidjson::GenericValue(postBuildCommands[i], buildJson.GetAllocator());
+					std::string command = value.GetString();
+					buildStruct.postBuildCommands.push_back(command);
+				}
+			}
+		}
+
 		//IMPRIME AS INFORMAÇÕES DE BUILD
 		std::cout << "\nCompilation Info:\n" << std::endl;
 		for (size_t i = 0; i < buildStruct.files.size(); i++) {
@@ -223,25 +258,64 @@ bool BuildSystem::Compile() {
 	//MONTA COMANDO DE COMPILAÇÃO
 	std::system("g++ --version");
 
+	//BASE DOS COMANDOS DE COMPILAÇÃO
+	std::string compileCommand = "g++";
+	std::string libCompileCommand = "ar rcs ";
+
 	//OUTPUTS
-	std::string output = buildDir + buildStruct.outputDir + buildStruct.outputName;
-	if (buildStruct.type == BuildTypes::DYNAMIC_LIB) {
-		output += ".dll";
-	} else if (buildStruct.type == BuildTypes::STATIC_LIB) {
-		output = buildDir + buildStruct.outputDir + "lib" + buildStruct.outputName + ".lib";
-	} else {
-		output += ".exe";
+	std::string output = buildDir + buildStruct.outputDir;
+	std::string objOutput = buildDir + buildStruct.outputDir + "obj/";
+
+	//ACRESCENTA TIPO DE BUILD AO DIRETÓRIO DOS OUTPUTS
+	if (buildStruct.buildType == BuildTypes::DEBUG) {
+		output += "debug/";
+		objOutput += "debug/";
+	} else if (buildStruct.buildType == BuildTypes::RELEASE) {
+		output += "release/";
+		objOutput += "release/";
+	} else if (buildStruct.buildType == BuildTypes::DISTRIBUTION) {
+		output += "distribution/";
+		objOutput += "distribution/";
 	}
 
-	std::string objOutput = buildDir + buildStruct.objOutput;
+	//ACRESCENTA ARQUITETURA AO DIRETÓRIO DE OBJETOS
+	if (buildStruct.architecture == Architectures::X86) {
+		output += "x86/";
+		objOutput += "x86/";
+		compileCommand += " -m32";
+	} else if (buildStruct.architecture == Architectures::X64) {
+		output += "x64/";
+		objOutput += "x64/";
+		compileCommand += " -m64";
+	} else {
+		std::cout << "Build Error: '" << buildStruct.architecture << "' is not a valid architecture\n";
+		return false;
+	}
+
+	if (buildStruct.type == TargetTypes::DYNAMIC_LIB) {
+		output += buildStruct.outputName + ".dll";
+	} else if (buildStruct.type == TargetTypes::STATIC_LIB) {
+		output += buildStruct.outputName + ".lib";
+	} else {
+		output += buildStruct.outputName + ".exe";
+	}
+
+	libCompileCommand += output;
+
 	std::cout << "\nOutput Name: " << output << std::endl;
 	std::cout << "Object Output Dir: " << objOutput << std::endl;
 
-	std::string compileCommand = "g++";
-	std::string libCompileCommand = "ar rcs " + output;
-
 	//VERSÃO DO C++
 	compileCommand += " --std=" + buildStruct.cppVersion;
+
+	//TIPO DE BUILD
+	if (buildStruct.buildType == BuildTypes::DEBUG) {
+		compileCommand += " -g -O0 -DDEBUG";
+	} else if (buildStruct.buildType == BuildTypes::RELEASE) {
+		compileCommand += " -O2 -g -DNDEBUG";
+	} else if (buildStruct.buildType == BuildTypes::DISTRIBUTION) {
+		compileCommand += " -O3 -DNDEBUG -s";
+	}
 
 	//ADICIONA INCLUDES AO COMANDO DE COMPILAÇÃO
 	if (!buildStruct.includeDirs.empty()) {
@@ -277,7 +351,7 @@ bool BuildSystem::Compile() {
 		std::string objFile = objOutput + filename + ".o";
 
 		std::string compileObjCommand = compileCommand;
-		if (buildStruct.type == BuildTypes::DYNAMIC_LIB) {
+		if (buildStruct.type == TargetTypes::DYNAMIC_LIB) {
 			compileObjCommand += " -fPIC";
 		}
 		compileObjCommand += " -c " + file + " -o " + objFile;
@@ -296,9 +370,9 @@ bool BuildSystem::Compile() {
 
 	//ADICIONA ARQUIVOS OBJETOS AO COMANDO DE LINKAGEM
 	for (auto objFile : objectFiles) {
-		if (buildStruct.type == BuildTypes::DYNAMIC_LIB || buildStruct.type == BuildTypes::EXECUTABLE) {
+		if (buildStruct.type == TargetTypes::DYNAMIC_LIB || buildStruct.type == TargetTypes::EXECUTABLE) {
 			compileCommand += " " + objFile;
-		} else if (buildStruct.type == BuildTypes::STATIC_LIB) {
+		} else if (buildStruct.type == TargetTypes::STATIC_LIB) {
 			libCompileCommand += " " + objFile;
 		}
 	}
@@ -318,8 +392,8 @@ bool BuildSystem::Compile() {
 	}
 
 	//RESETA O TARGET DE BUILD
-	if (!std::filesystem::exists(buildStruct.outputDir)) {
-		std::filesystem::create_directories(buildStruct.outputDir);
+	if (!std::filesystem::exists(output)) {
+		std::filesystem::create_directories(output.substr(0, output.find_last_of('/')));
 	} else {
 		std::fstream outputFile;
 	    outputFile.open(output, std::ios::in);
@@ -336,7 +410,7 @@ bool BuildSystem::Compile() {
 	//EXECUTA O COMANDO PARA COMPILAR
 	compileCommand += " -o " + output;
 
-	if (buildStruct.type == BuildTypes::STATIC_LIB) {
+	if (buildStruct.type == TargetTypes::STATIC_LIB) {
 		std::cout << "\nLinking static library: " << output << std::endl;
 		int commandResult = std::system(libCompileCommand.c_str());
 		if (commandResult != 0) {
@@ -351,6 +425,20 @@ bool BuildSystem::Compile() {
 	if (commandResult != 0) {
 		std::cout << "\nFatal Error: Error to compile files" << std::endl;
 		return false;
+	}
+
+
+	//EXECUTA COMANDOS PÓS BUILD
+	if (!buildStruct.postBuildCommands.empty()) {
+		std::cout << "\nExecuting post-build commands:\n" << std::endl;
+		for (size_t i = 0; i < buildStruct.postBuildCommands.size(); i++) {
+			std::string command = buildStruct.postBuildCommands[i];
+			std::cout << "Executing command: " << command << std::endl;
+			int postCommandResult = std::system(command.c_str());
+			if (postCommandResult != 0) {
+				std::cout << "\nWarning: Error to execute post-build command: " << command << std::endl;
+			}
+		}
 	}
 
 	return true;

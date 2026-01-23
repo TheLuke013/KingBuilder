@@ -1,8 +1,9 @@
 {
     "type": "executable",
+    "buildType": "distribution",
+    "architecture": "x64",
     "outputName": "Test",
     "outputDir": "build/",
-    "objOutput": "build/obj/",
     "cppVersion": "c++17",
     "filesDir": [
         "src/"
@@ -10,5 +11,6 @@
     "includesDir": [],
     "libsDir": [],
     "libs": [],
-    "defines": []
+    "defines": [],
+    "postBuildCommands": []
 }
