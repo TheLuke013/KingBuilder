@@ -1,5 +1,6 @@
 {
-    "outputName": "Test.exe",
+    "type": "executable",
+    "outputName": "Test",
     "outputDir": "build/",
     "objOutput": "build/obj/",
     "cppVersion": "c++17",

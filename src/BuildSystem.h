@@ -10,6 +10,7 @@
 #include "JSON.h"
 
 namespace BuildKeys {
+    constexpr const char* TYPE          = "type";
     constexpr const char* OUTPUT_NAME   = "outputName";
     constexpr const char* OUTPUT_DIR    = "outputDir";
     constexpr const char* OBJ_OUTPUT    = "objOutput";
@@ -21,7 +22,14 @@ namespace BuildKeys {
     constexpr const char* DEFINES       = "defines";
 };
 
+namespace BuildTypes {
+    constexpr const char* EXECUTABLE = "executable";
+    constexpr const char* STATIC_LIB = "staticLib";
+    constexpr const char* DYNAMIC_LIB = "dynamicLib";
+};
+
 struct BuildStruct {
+    std::string type;
     std::string outputName;
     std::string outputDir;
     std::string objOutput;
@@ -51,6 +59,7 @@ class BuildSystem {
 
         bool ValueIsGood(const std::string& value);
         bool ValueIsArray(const std::string& value);
+        bool CheckBuildType(const std::string& type);
         std::vector<std::string> GetFiles(const std::string& dirFiles);
 };
 

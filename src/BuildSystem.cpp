@@ -22,6 +22,14 @@ bool BuildSystem::ValueIsArray(const std::string& value) {
 	return true;
 }
 
+bool BuildSystem::CheckBuildType(const std::string& type) {
+	if (type != BuildTypes::EXECUTABLE && type != BuildTypes::STATIC_LIB && type != BuildTypes::DYNAMIC_LIB) {
+		std::cout << "Build Error: '" << type << "' is not a valid build type\n";
+		return false;
+	}
+	return true;
+}
+
 std::vector<std::string> BuildSystem::GetFiles(const std::string& dirFiles) {
 	try {
 		std::vector<std::string> files;
@@ -61,9 +69,16 @@ void BuildSystem::OpenBuildFile(const std::string& buildDir) {
 		buildJson.Parse(content);
 
 		//OBTEM VALORES NO ARQUIVO DE BUILD E OS VERIFICA
+		std::string type = buildJson.GetValue<std::string>(BuildKeys::TYPE, "");
+		if (!ValueIsGood(type) || !CheckBuildType(type)) {
+			std::cout << "Build Error: value ''" << BuildKeys::TYPE << "'' not is expected type" << std::endl;
+			return;
+		}
+		buildStruct.type = type;
+
 		std::string outputName = buildJson.GetValue<std::string>(BuildKeys::OUTPUT_NAME, "");
 		if (!ValueIsGood(outputName)) {
-			std::cout << "Build Error: value ''outputName'' not is expected type" << std::endl;
+			std::cout << "Build Error: value ''" << BuildKeys::OUTPUT_NAME << "'' not is expected type" << std::endl;
 			return;
 		}
 		buildStruct.outputName = outputName;
@@ -167,6 +182,7 @@ void BuildSystem::OpenBuildFile(const std::string& buildDir) {
 		for (size_t i = 0; i < buildStruct.files.size(); i++) {
 			std::cout << "File to compile: " << buildStruct.files[i] << std::endl;
 		}
+		std::cout << buildStruct.files.size() << " files to compile found.\n" << std::endl;
 
 		if (!buildStruct.includeDirs.empty()) {
 			for (size_t i = 0; i < buildStruct.includeDirs.size(); i++) {
@@ -209,9 +225,20 @@ bool BuildSystem::Compile() {
 
 	//OUTPUTS
 	std::string output = buildDir + buildStruct.outputDir + buildStruct.outputName;
+	if (buildStruct.type == BuildTypes::DYNAMIC_LIB) {
+		output += ".dll";
+	} else if (buildStruct.type == BuildTypes::STATIC_LIB) {
+		output = buildDir + buildStruct.outputDir + "lib" + buildStruct.outputName + ".lib";
+	} else {
+		output += ".exe";
+	}
+
 	std::string objOutput = buildDir + buildStruct.objOutput;
+	std::cout << "\nOutput Name: " << output << std::endl;
+	std::cout << "Object Output Dir: " << objOutput << std::endl;
 
 	std::string compileCommand = "g++";
+	std::string libCompileCommand = "ar rcs " + output;
 
 	//VERSÃO DO C++
 	compileCommand += " --std=" + buildStruct.cppVersion;
@@ -220,20 +247,6 @@ bool BuildSystem::Compile() {
 	if (!buildStruct.includeDirs.empty()) {
 		for (auto include : buildStruct.includeDirs) {
 			compileCommand += " -I" + include;
-		}
-	}
-
-	//ADICIONA LIBS DIR AO COMANDO DE COMPILAÇÃO
-	if (!buildStruct.libsDir.empty()) {
-		for (auto libDir : buildStruct.libsDir) {
-			compileCommand += " -L" + libDir;
-		}
-	}
-
-	//ADICIONA LIBS AO COMANDO DE COMPILAÇÃO
-	if (!buildStruct.libs.empty()) {
-		for (auto lib : buildStruct.libs) {
-			compileCommand += " -l" + lib;
 		}
 	}
 
@@ -253,6 +266,8 @@ bool BuildSystem::Compile() {
 	}
 
 	//COMPILA CADA ARQUIVO PARA OBJETO
+	std::vector<std::string> objectFiles;
+
 	for (size_t i = 0; i < buildStruct.files.size(); i++) {
 		std::string file = buildStruct.files[i];
 		std::cout << "\nCompiling file: " << file << std::endl;
@@ -262,7 +277,11 @@ bool BuildSystem::Compile() {
 		std::string objFile = objOutput + filename + ".o";
 
 		std::string compileObjCommand = compileCommand;
+		if (buildStruct.type == BuildTypes::DYNAMIC_LIB) {
+			compileObjCommand += " -fPIC";
+		}
 		compileObjCommand += " -c " + file + " -o " + objFile;
+		std::cout << "Compile Command: " << compileObjCommand << std::endl;
 
 		//EXECUTA O COMANDO PARA COMPILAR O OBJETO
 		int commandResult = std::system(compileObjCommand.c_str());
@@ -272,11 +291,34 @@ bool BuildSystem::Compile() {
 		}
 
 		//ADICIONA O ARQUIVO OBJETO AO COMANDO FINAL DE LINKAGEM
-		//compileCommand += " " + objFile;
+		objectFiles.push_back(objFile);
+	}
+
+	//ADICIONA ARQUIVOS OBJETOS AO COMANDO DE LINKAGEM
+	for (auto objFile : objectFiles) {
+		if (buildStruct.type == BuildTypes::DYNAMIC_LIB || buildStruct.type == BuildTypes::EXECUTABLE) {
+			compileCommand += " " + objFile;
+		} else if (buildStruct.type == BuildTypes::STATIC_LIB) {
+			libCompileCommand += " " + objFile;
+		}
+	}
+
+	//ADICIONA LIBS DIR AO COMANDO DE COMPILAÇÃO
+	if (!buildStruct.libsDir.empty()) {
+		for (auto libDir : buildStruct.libsDir) {
+			compileCommand += " -L" + libDir;
+		}
+	}
+
+	//ADICIONA LIBS AO COMANDO DE COMPILAÇÃO
+	if (!buildStruct.libs.empty()) {
+		for (auto lib : buildStruct.libs) {
+			compileCommand += " -l" + lib;
+		}
 	}
 
 	//RESETA O TARGET DE BUILD
-	/*if (!std::filesystem::exists(buildStruct.outputDir)) {
+	if (!std::filesystem::exists(buildStruct.outputDir)) {
 		std::filesystem::create_directories(buildStruct.outputDir);
 	} else {
 		std::fstream outputFile;
@@ -292,11 +334,24 @@ bool BuildSystem::Compile() {
 	}
 
 	//EXECUTA O COMANDO PARA COMPILAR
+	compileCommand += " -o " + output;
+
+	if (buildStruct.type == BuildTypes::STATIC_LIB) {
+		std::cout << "\nLinking static library: " << output << std::endl;
+		int commandResult = std::system(libCompileCommand.c_str());
+		if (commandResult != 0) {
+			std::cout << "\nFatal Error: Error to link static library" << std::endl;
+			return false;
+		}
+		return true;
+	}
+
+	std::cout << "\nLinking output: " << output << std::endl;
 	int commandResult = std::system(compileCommand.c_str());
 	if (commandResult != 0) {
 		std::cout << "\nFatal Error: Error to compile files" << std::endl;
 		return false;
-	}*/
+	}
 
 	return true;
 }

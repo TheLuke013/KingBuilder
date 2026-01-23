@@ -2,6 +2,7 @@
 #include <filesystem>
 
 int main() {
-    std::filesystem::path();
+    std::cout << "Build System Test" << std::endl;
+    std::cin.get();
     return 0;
 }
