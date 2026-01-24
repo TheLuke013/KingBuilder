@@ -13,6 +13,7 @@ namespace BuildKeys {
     constexpr const char* TYPE                = "type";
     constexpr const char* BUILD_TYPE          = "buildType";
     constexpr const char* ARCHITECTURE        = "architecture";
+    constexpr const char* SUBSYSTEM           = "subsystem";
     constexpr const char* OUTPUT_NAME         = "outputName";
     constexpr const char* OUTPUT_DIR          = "outputDir";
     constexpr const char* C_STANDARD          = "cStandard";
@@ -58,10 +59,16 @@ namespace Compilers {
     constexpr const char* CLANG        = "clang++";
 };
 
+namespace Subsystems {
+    constexpr const char* CONSOLE      = "console";
+    constexpr const char* WINDOWS      = "windows";
+};
+
 struct BuildStruct {
     std::string type;
     std::string buildType;
     std::string architecture;
+    std::string subsystem;
     std::string outputName;
     std::string outputDir;
     std::string cStandard;
@@ -84,12 +91,15 @@ class BuildSystem {
         void OpenBuildFile(const std::string& buildDir);
         bool Compile();
 
+        void SetCleanBuild(bool clean) { this->cleanBuild = clean; }
+
     private:
         std::fstream buildFile;
         std::string buildDir;
         BuildStruct buildStruct;
         JSON buildJson;
         bool canBuild;
+        bool cleanBuild;
 
         bool ValueIsGood(const std::string& value);
         bool ValueIsArray(const std::string& value);
@@ -98,6 +108,7 @@ class BuildSystem {
         bool CheckArchitecture(const std::string& architecture);
         bool CheckCXXStandard(const std::string& cxxStandard);
         bool CheckCompiler(const std::string& compiler);
+        bool CheckSubsystem(const std::string& subsystem);
 
         std::vector<std::string> GetFiles(const std::string& dirFiles);
 };

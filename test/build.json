@@ -2,6 +2,7 @@
     "type": "executable",
     "buildType": "distribution",
     "architecture": "x64",
+    "subsystem": "console",
     "outputName": "Test",
     "outputDir": "build/",
     "cStandard": "c++17",

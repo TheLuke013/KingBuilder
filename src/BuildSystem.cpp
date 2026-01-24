@@ -1,6 +1,6 @@
 #include "BuildSystem.h"
 
-BuildSystem::BuildSystem() : buildDir(""), buildJson(JSON()), canBuild(false) {}
+BuildSystem::BuildSystem() : buildDir(""), buildJson(JSON()), canBuild(false), cleanBuild(false) {}
 
 BuildSystem::~BuildSystem() {
     if (buildFile.is_open())
@@ -69,6 +69,15 @@ bool BuildSystem::CheckCompiler(const std::string& compiler) {
 	return true;
 }
 
+bool BuildSystem::CheckSubsystem(const std::string& subsystem) {
+	if (subsystem != Subsystems::CONSOLE &&
+		subsystem != Subsystems::WINDOWS) {
+		std::cout << "Build Error: '" << subsystem << "' is not a valid subsystem\n";
+		return false;
+	}
+	return true;
+}
+
 std::vector<std::string> BuildSystem::GetFiles(const std::string& dirFiles) {
 	try {
 		std::vector<std::string> files;
@@ -128,6 +137,13 @@ void BuildSystem::OpenBuildFile(const std::string& buildDir) {
 			return;
 		}
 		buildStruct.architecture = architecture;
+
+		std::string subsystem = buildJson.GetValue<std::string>(BuildKeys::SUBSYSTEM, "");
+		if (!ValueIsGood(subsystem) || !CheckSubsystem(subsystem)) {
+			std::cout << "Build Error: value ''" << BuildKeys::SUBSYSTEM << "'' not is expected type" << std::endl;
+			return;
+		}
+		buildStruct.subsystem = subsystem;
 
 		std::string outputName = buildJson.GetValue<std::string>(BuildKeys::OUTPUT_NAME, "");
 		if (!ValueIsGood(outputName)) {
@@ -357,7 +373,7 @@ bool BuildSystem::Compile() {
 		output += buildStruct.outputName + ".dll";
 		objOutput += "obj/";
 	} else if (buildStruct.type == TargetTypes::STATIC_LIB) {
-		output += buildStruct.outputName + ".lib";
+		output += "lib" +buildStruct.outputName + ".a";
 		objOutput += "obj/";
 	} else {
 		output += buildStruct.outputName + ".exe";
@@ -386,6 +402,11 @@ bool BuildSystem::Compile() {
 		compileCommand += " -fvisibility=hidden";
 	}
 
+	//SUBSYSTEM
+	if (buildStruct.subsystem == Subsystems::WINDOWS) {
+		compileCommand += " -mwindows";
+	}
+
 	//ADICIONA INCLUDES AO COMANDO DE COMPILAÇÃO
 	if (!buildStruct.includeDirs.empty()) {
 		for (auto include : buildStruct.includeDirs) {
@@ -408,13 +429,21 @@ bool BuildSystem::Compile() {
 		std::filesystem::create_directories(objOutput);
 	}
 
+	//LIMPA DIRETORIO DE BUILD DE OBJETOS SE FOR BUILD LIMPO
+	if (cleanBuild) {
+		std::cout << "\nClean Build: Removing object files in " << objOutput << std::endl;
+		for (const auto& entry : std::filesystem::directory_iterator(objOutput)) {
+			if (entry.is_regular_file()) {
+				std::filesystem::remove(entry.path());
+			}
+		}
+	}
+
 	//COMPILA CADA ARQUIVO PARA OBJETO
 	std::vector<std::string> objectFiles;
 
 	for (size_t i = 0; i < buildStruct.files.size(); i++) {
 		std::string file = buildStruct.files[i];
-		std::cout << "\nCompiling file: " << file << std::endl;
-
 		std::filesystem::path filepath = std::filesystem::path(file);
 		auto relative = std::filesystem::relative(filepath, buildDir);
 		std::string safeName = relative.string();
@@ -438,6 +467,8 @@ bool BuildSystem::Compile() {
 		std::cout << "Compile Command: " << compileObjCommand << std::endl;
 
 		//EXECUTA O COMANDO PARA COMPILAR O OBJETO
+		std::cout << "\nCompiling file: " << file << std::endl;
+
 		int commandResult = std::system(compileObjCommand.c_str());
 		if (commandResult != 0) {
 			std::cout << "\nFatal Error: Error to compile file: " << file << std::endl;
