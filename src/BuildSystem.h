@@ -1,5 +1,5 @@
-#ifndef BUILD_H
-#define BUILD_H
+#ifndef BUILD_SYSTEM_H
+#define BUILD_SYSTEM_H
 
 #include <iostream>
 #include <string>
@@ -109,8 +109,12 @@ class BuildSystem {
         bool CheckCXXStandard(const std::string& cxxStandard);
         bool CheckCompiler(const std::string& compiler);
         bool CheckSubsystem(const std::string& subsystem);
+        bool IsCompilableSource(const std::string& file);
+        bool NeedsRebuild(const std::string& sourceFile, const std::string& objectFile, const std::string& depFile);
 
         std::vector<std::string> GetFiles(const std::string& dirFiles);
+        std::vector<std::string> GetObjectFiles(const std::string& objectDir);
+        std::string GetObjectFilePath(const std::string& sourceFile, const std::string& objOutput);
 };
 
 #endif

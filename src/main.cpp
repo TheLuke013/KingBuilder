@@ -40,9 +40,8 @@ int main(int argc, char** argv) {
         }
     } catch (const std::exception& e) {
         std::cout << "Fatal Error: " << e.what() << std::endl;
+        return 1;
     }
-
-    system("pause");
 
 	return 0;
 }

@@ -1,6 +1,9 @@
 #include "BuildSystem.h"
 
-BuildSystem::BuildSystem() : buildDir(""), buildJson(JSON()), canBuild(false), cleanBuild(false) {}
+#include <unordered_set>
+
+BuildSystem::BuildSystem() : buildDir(""), buildJson(JSON()), canBuild(false),
+ 							 cleanBuild(false) {}
 
 BuildSystem::~BuildSystem() {
     if (buildFile.is_open())
@@ -14,8 +17,12 @@ bool BuildSystem::ValueIsGood(const std::string& value) {
 }
 
 bool BuildSystem::ValueIsArray(const std::string& value) {
-	if (!buildJson.GetData().HasMember(value.c_str()) || !buildJson.GetData()[value.c_str()].IsArray()) {
-		std::cout << "Build Error: '" << value << "' must be an array\n";
+	if (buildJson.GetData().HasMember(value.c_str())) {
+		if (!buildJson.GetData()[value.c_str()].IsArray()) {
+			std::cout << "Build Warning: '" << value << "' must be an array\n";
+			return false;
+		}
+	} else {
 		return false;
 	}
 
@@ -76,6 +83,105 @@ bool BuildSystem::CheckSubsystem(const std::string& subsystem) {
 		return false;
 	}
 	return true;
+}
+
+bool BuildSystem::IsCompilableSource(const std::string& file) {
+	std::filesystem::path filepath = std::filesystem::path(file);
+	std::string extension = filepath.extension().string();
+
+	const std::vector<std::string> compilableExtensions = {
+		".cpp", ".cxx", ".cc", ".c", ".m", ".mm"
+	};
+
+	return std::find(compilableExtensions.begin(), compilableExtensions.end(), extension) != compilableExtensions.end();
+}
+
+bool BuildSystem::NeedsRebuild(
+    const std::string& sourceFile,
+    const std::string& objectFile,
+    const std::string& depFile
+) {
+    namespace fs = std::filesystem;
+
+    if (!fs::exists(objectFile) || !fs::exists(depFile)) {
+        return true;
+    }
+
+    auto objectTime = fs::last_write_time(objectFile);
+
+    if (fs::last_write_time(sourceFile) > objectTime) {
+        return true;
+    }
+
+    std::ifstream file(depFile);
+    if (!file.is_open()) {
+        return true;
+    }
+
+    std::string content;
+    std::string line;
+
+    while (std::getline(file, line)) {
+        if (!line.empty() && line.back() == '\\') {
+            line.pop_back();
+        }
+        content += line + " ";
+    }
+
+    auto colon = content.find(':');
+    if (colon == std::string::npos) {
+        return true;
+    }
+
+    std::istringstream deps(content.substr(colon + 1));
+    std::string dep;
+
+    while (deps >> dep) {
+        if (!dep.empty() && dep.back() == ':') {
+            continue;
+        }
+
+        if (fs::equivalent(dep, sourceFile)) {
+            continue;
+        }
+
+        if (!fs::exists(dep)) {
+            return true;
+        }
+
+        if (fs::last_write_time(dep) > objectTime) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+std::string BuildSystem::GetObjectFilePath(const std::string& sourceFile, const std::string& objOutput) {
+    auto relative = std::filesystem::relative(sourceFile, buildDir);
+    std::string safeName = relative.string();
+    std::replace(safeName.begin(), safeName.end(), '/', '_');
+    std::replace(safeName.begin(), safeName.end(), '\\', '_');
+    return objOutput + safeName + ".o";
+}
+
+std::vector<std::string> BuildSystem::GetObjectFiles(const std::string& objectDir) {
+	std::vector<std::string> objectFiles;
+
+	try {
+		for (const auto& entry : std::filesystem::directory_iterator(objectDir)) {
+			if (entry.is_regular_file()) {
+				std::string path = entry.path().string();
+				if (entry.path().extension() == ".o") {
+					objectFiles.push_back(path);
+				}
+			}
+		}
+	} catch (const std::filesystem::filesystem_error& e) {
+		std::cout << "Build Error: Filesystem Error: " << e.what() << std::endl;
+	}
+
+	return objectFiles;
 }
 
 std::vector<std::string> BuildSystem::GetFiles(const std::string& dirFiles) {
@@ -195,7 +301,12 @@ void BuildSystem::OpenBuildFile(const std::string& buildDir) {
 		for (size_t i = 0; i < buildStruct.Dirfiles.size(); i++) {
 			std::string dirFiles = buildStruct.Dirfiles[i];
 			std::vector<std::string> dirFilesVector = GetFiles(dirFiles);
-			buildStruct.files.insert(buildStruct.files.end(), dirFilesVector.begin(), dirFilesVector.end());
+			for (size_t j = 0; j < dirFilesVector.size(); j++) {
+				std::string file = dirFilesVector[j];
+				if (IsCompilableSource(file)) {
+					buildStruct.files.push_back(file);
+				}
+			}
 		}
 
 		//VERIFICA SE O ARRAY DE INCLUDE DIRS POSSUI ALGUM ELEMENTO
@@ -267,37 +378,6 @@ void BuildSystem::OpenBuildFile(const std::string& buildDir) {
 					std::string command = value.GetString();
 					buildStruct.postBuildCommands.push_back(command);
 				}
-			}
-		}
-
-		//IMPRIME AS INFORMAÇÕES DE BUILD
-		std::cout << "\nCompilation Info:\n" << std::endl;
-		for (size_t i = 0; i < buildStruct.files.size(); i++) {
-			std::cout << "File to compile: " << buildStruct.files[i] << std::endl;
-		}
-		std::cout << buildStruct.files.size() << " files to compile found.\n" << std::endl;
-
-		if (!buildStruct.includeDirs.empty()) {
-			for (size_t i = 0; i < buildStruct.includeDirs.size(); i++) {
-				std::cout << "Include Dir: " << buildStruct.includeDirs[i] << std::endl;
-			}
-		}
-
-		if (!buildStruct.libsDir.empty()) {
-			for (size_t i = 0; i < buildStruct.libsDir.size(); i++) {
-				std::cout << "Libs Dir: " << buildStruct.libsDir[i] << std::endl;
-			}
-		}
-
-		if (!buildStruct.libs.empty()) {
-			for (size_t i = 0; i < buildStruct.libs.size(); i++) {
-				std::cout << "Libs: " << buildStruct.libs[i] << std::endl;
-			}
-		}
-
-		if (!buildStruct.defines.empty()) {
-			for (size_t i = 0; i < buildStruct.defines.size(); i++) {
-				std::cout << "Define: " << buildStruct.defines[i] << std::endl;
 			}
 		}
 
@@ -431,6 +511,7 @@ bool BuildSystem::Compile() {
 
 	//LIMPA DIRETORIO DE BUILD DE OBJETOS SE FOR BUILD LIMPO
 	if (cleanBuild) {
+		//REMOVE TODOS ARQUIVOS OBJETOS DO DIRETÓRIO DE OBJETOS
 		std::cout << "\nClean Build: Removing object files in " << objOutput << std::endl;
 		for (const auto& entry : std::filesystem::directory_iterator(objOutput)) {
 			if (entry.is_regular_file()) {
@@ -439,57 +520,55 @@ bool BuildSystem::Compile() {
 		}
 	}
 
+	//DECIDE QUAIS ARQUIVOS DEVEM SER (RE)COMPILADOS
+	std::vector<std::string> filesToCompile;
+
+	for (const auto& file : buildStruct.files) {
+		std::string objFile = GetObjectFilePath(file, objOutput);
+		std::string depFile = objFile + ".d";
+
+		if (NeedsRebuild(file, objFile, depFile)) {
+			filesToCompile.push_back(file);
+		} else {
+			std::cout << "Skipping up-to-date file: " << file << std::endl;
+		}
+	}
+
+	if (filesToCompile.empty()) {
+		std::cout << "\nNothing to compile. All files are up to date." << std::endl;
+	}
+
 	//COMPILA CADA ARQUIVO PARA OBJETO
-	std::vector<std::string> objectFiles;
+	for (const auto& file : filesToCompile) {
+		std::string objFile = GetObjectFilePath(file, objOutput);
+		std::string depFile = objFile + ".d";
 
-	for (size_t i = 0; i < buildStruct.files.size(); i++) {
-		std::string file = buildStruct.files[i];
-		std::filesystem::path filepath = std::filesystem::path(file);
-		auto relative = std::filesystem::relative(filepath, buildDir);
-		std::string safeName = relative.string();
-		std::replace(safeName.begin(), safeName.end(), '/', '_');
-		std::replace(safeName.begin(), safeName.end(), '\\', '_');
-
-		std::string objFile = objOutput + safeName + ".o";
-
-		if (std::filesystem::exists(objFile)) {
-			if (std::filesystem::last_write_time(objFile) >
-				std::filesystem::last_write_time(file)) {
-				continue;
-			}
-		}
-
-		std::string compileObjCommand = compileCommand;
+		std::string cmd = compileCommand;
 		if (buildStruct.type == TargetTypes::DYNAMIC_LIB) {
-			compileObjCommand += " -fPIC";
+			cmd += " -fPIC";
 		}
-		compileObjCommand += " -c " + file + " -o " + objFile;
-		std::cout << "Compile Command: " << compileObjCommand << std::endl;
 
-		//EXECUTA O COMANDO PARA COMPILAR O OBJETO
+		cmd += " -c " + file + " -o " + objFile;
+		cmd += " -MMD -MP -MF " + depFile;
+
 		std::cout << "\nCompiling file: " << file << std::endl;
 
-		int commandResult = std::system(compileObjCommand.c_str());
-		if (commandResult != 0) {
+		if (std::system(cmd.c_str()) != 0) {
 			std::cout << "\nFatal Error: Error to compile file: " << file << std::endl;
 			return false;
 		}
-
-		//ADICIONA O ARQUIVO OBJETO AO COMANDO FINAL DE LINKAGEM
-		objectFiles.push_back(objFile);
-	}
-
-	if (objectFiles.empty()) {
-		std::cout << "\nNothing to compile. All files are up to date." << std::endl;
-		return true;
 	}
 
 	//ADICIONA ARQUIVOS OBJETOS AO COMANDO DE LINKAGEM
-	for (auto objFile : objectFiles) {
-		if (buildStruct.type == TargetTypes::DYNAMIC_LIB || buildStruct.type == TargetTypes::EXECUTABLE) {
-			compileCommand += " " + objFile;
-		} else if (buildStruct.type == TargetTypes::STATIC_LIB) {
-			libCompileCommand += " " + objFile;
+	std::unordered_set<std::string> validObjects;
+
+	for (const auto& file : buildStruct.files) {
+		validObjects.insert(GetObjectFilePath(file, objOutput));
+	}
+
+	for (const auto& obj : GetObjectFiles(objOutput)) {
+		if (validObjects.count(obj)) {
+			compileCommand += " " + obj;
 		}
 	}
 
