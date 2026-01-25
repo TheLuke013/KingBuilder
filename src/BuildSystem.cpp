@@ -1,4 +1,5 @@
 #include "BuildSystem.h"
+#include "ThreadPool.h"
 
 #include <unordered_set>
 
@@ -538,49 +539,75 @@ bool BuildSystem::Compile() {
 		std::cout << "\nNothing to compile. All files are up to date." << std::endl;
 	}
 
+	//CRIA POOL DE THREADS PARA COMPILAÇÃO
+	unsigned int threads = std::thread::hardware_concurrency();
+	if (threads == 0) threads = 4;
+
+	std::cout << "\nUsing " << threads - 1 << " threads for compilation." << std::endl;
+	threads = std::max(1u, threads - 1);
+	ThreadPool pool(threads);
+
 	//COMPILA CADA ARQUIVO PARA OBJETO
+	std::atomic<bool> anyObjectRebuilt{false};
+
 	for (const auto& file : filesToCompile) {
-		std::string objFile = GetObjectFilePath(file, objOutput);
-		std::string depFile = objFile + ".d";
+		pool.Enqueue([&, file]() {
+			std::string objFile = GetObjectFilePath(file, objOutput);
+			std::string depFile = objFile + ".d";
 
-		std::string cmd = compileCommand;
-		if (buildStruct.type == TargetTypes::DYNAMIC_LIB) {
-			cmd += " -fPIC";
-		}
+			std::string cmd = compileCommand;
+			if (buildStruct.type == TargetTypes::DYNAMIC_LIB) {
+				cmd += " -fPIC";
+			}
 
-		cmd += " -c " + file + " -o " + objFile;
-		cmd += " -MMD -MP -MF " + depFile;
+			cmd += " -c " + file + " -o " + objFile;
+			cmd += " -MMD -MP -MF " + depFile;
 
-		std::cout << "\nCompiling file: " << file << std::endl;
+			std::cout << "\nCompiling file: " << file << std::endl;
 
-		if (std::system(cmd.c_str()) != 0) {
-			std::cout << "\nFatal Error: Error to compile file: " << file << std::endl;
-			return false;
-		}
+			if (std::system(cmd.c_str()) == 0) {
+				anyObjectRebuilt = true;
+			} else {
+				std::cout << "\nFatal Error compiling: " << file << std::endl;
+				pool.SignalError();
+			}
+		});
+	}
+
+	pool.Wait();
+
+	if (pool.HasError()) {
+		std::cout << "\nBuild failed." << std::endl;
+		return false;
 	}
 
 	//ADICIONA ARQUIVOS OBJETOS AO COMANDO DE LINKAGEM
-	std::unordered_set<std::string> validObjects;
+	if (anyObjectRebuilt) {
+		std::cout << "\nLinking output: " << output << std::endl;
+		std::unordered_set<std::string> validObjects;
 
-	for (const auto& file : buildStruct.files) {
-		validObjects.insert(GetObjectFilePath(file, objOutput));
-	}
-
-	for (const auto& obj : GetObjectFiles(objOutput)) {
-		if (validObjects.count(obj)) {
-			compileCommand += " " + obj;
+		for (const auto& file : buildStruct.files) {
+			validObjects.insert(GetObjectFilePath(file, objOutput));
 		}
+
+		for (const auto& obj : GetObjectFiles(objOutput)) {
+			if (validObjects.count(obj)) {
+				compileCommand += " " + obj;
+			}
+		}
+	} else {
+		std::cout << "\nSkipping link (up to date)" << std::endl;
 	}
 
 	//ADICIONA LIBS DIR AO COMANDO DE COMPILAÇÃO
-	if (!buildStruct.libsDir.empty()) {
+	if (anyObjectRebuilt && !buildStruct.libsDir.empty()) {
 		for (auto libDir : buildStruct.libsDir) {
 			compileCommand += " -L" + libDir;
 		}
 	}
 
 	//ADICIONA LIBS AO COMANDO DE COMPILAÇÃO
-	if (!buildStruct.libs.empty()) {
+	if (anyObjectRebuilt && !buildStruct.libs.empty()) {
 		for (auto lib : buildStruct.libs) {
 			compileCommand += " -l" + lib;
 		}
@@ -607,21 +634,26 @@ bool BuildSystem::Compile() {
 
 	if (buildStruct.type == TargetTypes::STATIC_LIB) {
 		std::cout << "\nLinking static library: " << output << std::endl;
+
+		for (const auto& obj : GetObjectFiles(objOutput)) {
+			libCompileCommand += " " + obj;
+		}
+
+		std::cout << "\nExecuting command: " << libCompileCommand << std::endl;
+
 		int commandResult = std::system(libCompileCommand.c_str());
 		if (commandResult != 0) {
 			std::cout << "\nFatal Error: Error to link static library" << std::endl;
 			return false;
 		}
-		return true;
+	} else if (buildStruct.type != TargetTypes::STATIC_LIB) {
+		std::cout << "\nLinking output: " << output << std::endl;
+		int commandResult = std::system(compileCommand.c_str());
+		if (commandResult != 0) {
+			std::cout << "\nFatal Error: Error to compile files" << std::endl;
+			return false;
+		}
 	}
-
-	std::cout << "\nLinking output: " << output << std::endl;
-	int commandResult = std::system(compileCommand.c_str());
-	if (commandResult != 0) {
-		std::cout << "\nFatal Error: Error to compile files" << std::endl;
-		return false;
-	}
-
 
 	//EXECUTA COMANDOS PÓS BUILD
 	if (!buildStruct.postBuildCommands.empty()) {
